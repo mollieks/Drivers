@@ -52,6 +52,8 @@ class Pulse:
         self.drag_detuning = 0.0
         self.start_at_zero = False
         self.complex = complex
+        self.iq_skew = 0.0
+        self.iq_ratio = 1.0
 
     def total_duration(self):
         """Get the total duration for the pulse.
@@ -83,7 +85,7 @@ class Pulse:
         """
         raise NotImplementedError()
 
-    def calculate_waveform(self, t0, t):
+    def calculate_waveform(self, t0, t, ignore_drag_modulation=False):
         """Calculate pulse waveform including phase shifts and SSB-mixing.
 
         Parameters
@@ -93,6 +95,9 @@ class Pulse:
 
         t : numpy array
             Array with time values for which to calculate the pulse waveform.
+
+        ignore_drag_modulation : bool
+            If True, drag and modulation is disabled.
 
         Returns
         -------
@@ -104,6 +109,15 @@ class Pulse:
         # Make sure the waveform is zero outside the pulse
         y[t < (t0 - self.total_duration() / 2)] = 0
         y[t > (t0 + self.total_duration() / 2)] = 0
+
+        # speed up generation by not applying transforms if not necessary
+        if not self.complex:
+            return y
+
+        # if ignoring modulation, just apply global phase and return
+        if ignore_drag_modulation:
+            y = y * np.exp(- 1j * self.phase)
+            return y
 
         if self.use_drag and self.complex:
             beta = self.drag_coefficient / (t[1] - t[0])
@@ -119,9 +133,10 @@ class Pulse:
             # apply SSBM transform
             data_i = (y.real * np.cos(omega * t - phase) +
                       -y.imag * np.cos(omega * t - phase + +np.pi / 2))
-            data_q = (y.real * np.sin(omega * t - phase) +
-                      -y.imag * np.sin(omega * t - phase + +np.pi / 2))
-            y = data_i + 1j * data_q
+            data_q = (y.real * np.sin(omega * t - phase + self.iq_skew) +
+                      -y.imag * np.sin(omega * t - phase + np.pi / 2 +
+                      self.iq_skew))
+            y = self.iq_ratio * data_i + 1j * data_q
         return y
 
 

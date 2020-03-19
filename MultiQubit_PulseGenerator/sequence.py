@@ -128,7 +128,6 @@ class Step:
             raise ValueError("Qubit index should be int.")
 
         def _in(input_list, n):
-            flat_list = []
             for sublist_or_el in input_list:
                 if isinstance(sublist_or_el, list):
                     if _in(sublist_or_el, n) is True:
@@ -551,6 +550,18 @@ class SequenceToWaveforms:
         self.gate_overlap = 20E-9
         self.minimal_gate_time = 20E-9
 
+        #z offset
+        self.use_z_offset=False
+        self.extend_Z_offset_readout=True
+        self.z_offset_time_after_readout=10e-9
+        self.z_offset_ringup=10.e-9
+        self.z_offset_amplitude=[0.]*self.n_qubit
+
+        #Z during readout
+        self.use_z_during_readout=False
+        self.z_readout_ringup=20e-9
+        self.z_readout_amplitude=[0.]*self.n_qubit
+
         # filters
         self.use_gate_filter = False
         self.use_z_filter = False
@@ -616,6 +627,10 @@ class SequenceToWaveforms:
             for n in range(1, self.n_qubit):
                 self._wave_xy[n][:] = 0.0
 
+        if self.use_z_offset:
+            self._add_global_Z_offset()
+        if self.use_z_during_readout:
+            self._add_z_during_readout()
         # log.info('before predistortion, _wave_z max is {}'.format(np.max(self._wave_z)))
         # if self.compensate_crosstalk:
         #     self._perform_crosstalk_compensation()
@@ -628,6 +643,7 @@ class SequenceToWaveforms:
         if self.generate_gate_switch:
             self._add_microwave_gate()
         self._filter_output_waveforms()
+        self._zero_last_z_point()
 
         # Apply offsets
         self.readout_iq += self.readout_i_offset + 1j * self.readout_q_offset
@@ -873,6 +889,50 @@ class SequenceToWaveforms:
             # store results
             self._wave_gate[n] = gate
 
+    def _add_global_Z_offset(self):
+        """ Create waveforms for global Z offset. """
+
+        z_offset=np.ones_like(self._wave_z[0])
+        # add cosine ring-up and ring-down
+        n_width = int(np.round(0.5*self.z_offset_ringup * self.sample_rate))
+        slope=0.5*(1-np.cos(np.pi*np.arange(n_width)/n_width))
+        z_offset[1:int(1+n_width)]=slope
+        z_offset[(-n_width-1):-1]=slope[::-1]
+
+        # make sure z_offset starts/ends in 0
+        z_offset[0]=0.
+        z_offset[-1]=0.
+
+        # append offset to Z waveforms
+        for n in range(self.n_qubit):
+            self._wave_z[n]+=(z_offset*self.z_offset_amplitude[n])
+
+    def _add_z_during_readout(self):
+        """ Add Z pulses during readout. """
+
+        #find readout waveform with maximum readout time
+        z_during_readout=np.ones(int((sorted([p.total_duration() for p in self.pulses_readout])[-1]+ \
+            self.readout_delay)*self.sample_rate))
+
+        log.info(len(z_during_readout))
+
+        # add cosine ring-up and ring-down
+        n_width = int(np.round(0.5*self.z_readout_ringup * self.sample_rate))
+        slope=0.5*(1-np.cos(np.pi*np.arange(n_width)/n_width))
+        z_during_readout[1:int(1+n_width)]=slope
+        z_during_readout[(-n_width-1):-1]=slope[::-1]
+
+        # make sure z_offset starts/ends in 0
+        z_during_readout[0]=0.
+        z_during_readout[-1]=0.
+
+        #len of z during readout pulses
+        z_during_readout_length=len(z_during_readout)
+
+        # add to Z waveforms during readout (at their ends)
+        for n in range(self.n_qubit):
+            self._wave_z[n][-z_during_readout_length:]+=(z_during_readout*self.z_readout_amplitude[n])
+
     def _filter_output_waveforms(self):
         """Filter output waveforms"""
         # start with gate
@@ -945,6 +1005,13 @@ class SequenceToWaveforms:
         y = np.convolve(s, window, mode='same')
         return y[n:-n+1]
 
+    def _zero_last_z_point(self):
+        """Make sure last point in z waveforms is always zero, since this is 
+           the value output by the AWG between sequences.
+        """
+        for n in range(self.n_qubit):
+            self._wave_z[n][-1]=0
+
     def _round(self, t, acc=1E-12):
         """Round the time `t` with a certain accuarcy `acc`.
 
@@ -961,7 +1028,7 @@ class SequenceToWaveforms:
             The rounded time.
 
         """
-        return int(np.round(t / acc)) * acc
+        return int(round(t / acc)) * acc
 
     def _add_readout_trig(self):
         """Create waveform for readout trigger."""
@@ -994,13 +1061,26 @@ class SequenceToWaveforms:
         # find the end of the sequence
         # only include readout in size estimate if all waveforms have same size
         if self.readout_match_main_size:
-            end = np.max([s.t_end for s in self.sequence_list]) + max_delay
+            if len(self.sequence_list) == 0:
+                end = max_delay
+            else:
+                end = np.max(
+                    [s.t_end for s in self.sequence_list]) + max_delay
         else:
-            end = np.max([s.t_end
-                          for s in self.sequence_list[0:-1]]) + max_delay
+            if len(self.sequence_list) <= 1:
+                end = max_delay
+            else:
+                end = np.max(
+                    [s.t_end for s in self.sequence_list[0:-1]]) + max_delay
 
         # create empty waveforms of the correct size
         if self.trim_to_sequence:
+            if self.extend_Z_offset_readout and not self.readout_match_main_size:
+                t_max_readout=0
+                for pulse in self.pulses_readout:
+                    if pulse.total_duration()>t_max_readout: t_max_readout=pulse.total_duration()
+                if self.readout_trig_duration>t_max_readout: t_max_readout=self.readout_trig_duration
+                end+=(t_max_readout+self.z_offset_time_after_readout)
             self.n_pts = int(np.ceil(end * self.sample_rate)) + 1
             if self.n_pts % 2 == 1:
                 # Odd n_pts give spectral leakage in FFT
@@ -1032,9 +1112,29 @@ class SequenceToWaveforms:
 
     def _generate_waveforms(self):
         """Generate the waveforms corresponding to the sequence."""
-        # log.info('generating waveform from sequence. Len is {}'.format(len(self.sequence_list)))
+        # check if drag and modulations frequencies are equal for all pulses
+        all_drag_f_equal = True
+        freqs = [self.pulses_1qb_xy[n].frequency for n in range(self.n_qubit)]
+        drags = [self.pulses_1qb_xy[n].use_drag for n in range(self.n_qubit)]
         for step in self.sequence_list:
-            # log.info('Generating gates {}'.format(step.gates))
+            for gate in step.gates:
+                # only keep track of single-qubit xy gates
+                if not isinstance(gate.gate, gates.SingleQubitXYRotation):
+                    continue
+                n = gate.qubit
+                if isinstance(n, list):
+                    n = n[0]
+                # check drag and freq params
+                if (gate.pulse.frequency != freqs[n] or
+                        gate.pulse.use_drag != drags[n]):
+                    all_drag_f_equal = False
+                if gate.pulse.use_drag and gate.pulse.drag_detuning != 0:
+                    all_drag_f_equal = False
+            # break for loop at first difference
+            if not all_drag_f_equal:
+                break
+
+        for step in self.sequence_list:
             for gate in step.gates:
                 qubit = gate.qubit
                 if isinstance(qubit, list):
@@ -1137,7 +1237,25 @@ class SequenceToWaveforms:
                         t0 = middle - (max_duration - gate.duration) / 2
                     elif step.align == 'right':
                         t0 = middle + (max_duration - gate.duration) / 2
-                    waveform[indices] += gate.pulse.calculate_waveform(t0, t)
+                    waveform[indices] += gate.pulse.calculate_waveform(
+                        t0, t, ignore_drag_modulation=(
+                            all_drag_f_equal and isinstance(
+                                gate_obj, gates.SingleQubitXYRotation)
+                        )
+                    )
+
+        # if all frequencies and drag were the same, apply afterwards
+        if all_drag_f_equal:
+            dt = self.t[1] - self.t[0]
+            for n, wave in enumerate(self._wave_xy):
+                # apply drag
+                if drags[n]:
+                    beta = self.pulses_1qb_xy[n].drag_coefficient / dt
+                    wave -= 1j * beta * np.gradient(wave)
+
+                # modulation
+                if freqs[n] != 0:
+                    wave *= np.exp(1j * 2 * np.pi * freqs[n] * self.t)
 
     def set_parameters(self, config={}):
         """Set base parameters using config from from Labber driver.
@@ -1242,6 +1360,18 @@ class SequenceToWaveforms:
                 pulse.amplitude = config.get('Amplitude #%d, Z' % m)
 
             self.pulses_1qb_z[n] = pulse
+
+        #z offset
+        self.use_z_offset=config.get('Use global Z offset')
+        self.extend_Z_offset_readout=config.get('Extend Z offset to readout')
+        self.z_offset_time_after_readout=config.get('Time after readout, Z global')
+        self.z_offset_ringup=config.get('Ringup, Z global')
+        for n in range(len(self.pulses_1qb_z)): self.z_offset_amplitude[n]=config.get('Amplitude #{:d}, Z global'.format(n+1))
+
+        #Z during readout
+        self.use_z_during_readout=config.get('Use Z pulse during readout')
+        self.z_readout_ringup=config.get('Ringup time, Z during readout')
+        for n in range(len(self.pulses_1qb_z)): self.z_readout_amplitude[n]=config.get('Amplitude #{:d}, Z during readout'.format(n+1))
 
         # two-qubit pulses
         for n, pulse in enumerate(self.pulses_2qb):
@@ -1357,6 +1487,8 @@ class SequenceToWaveforms:
         self.readout_trig_duration = config.get('Readout trig duration')
         self.readout_predistort = config.get('Predistort readout waveform')
         self.readout.set_parameters(config)
+
+        self.readout_delay=config.get('Readout delay')
 
         # get readout pulse parameters
         phases = 2 * np.pi * np.array([
