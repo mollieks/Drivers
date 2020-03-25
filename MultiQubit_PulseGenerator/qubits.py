@@ -99,12 +99,18 @@ class Transmon(Qubit):
         self.d = (self.f01_min + self.Ec)**2 / (8 * self.EJS * self.Ec)
 
     def V_to_f(self, V):  # noqa 102
-        F = np.pi * (V - self.Voffset) / self.Vperiod
+        F = np.pi * (V + self.Voffset) / self.Vperiod
         f = np.sqrt(8 * self.EJS * self.Ec * np.abs(np.cos(F)) *
                     np.sqrt(1 + self.d**2 * np.tan(F)**2)) - self.Ec
         return f
 
     def f_to_V(self, f):  # noqa 102
+        # fix types
+        if type(f) is float:
+            f = np.array([f])
+        else:
+            f = np.array(f)
+
         # Make sure frequencies are inside the possible frequency range
         if np.any(f > self.f01_max):
             raise ValueError(
@@ -116,28 +122,28 @@ class Transmon(Qubit):
         # Calculate the required EJ for the given frequencies
         EJ = (f + self.Ec)**2 / (8 * self.Ec)
 
-        # Calculate the F=pi*(V-voffset)/vperiod corresponding to that EJ
-        F = np.arcsin(np.sqrt((EJ**2 / self.EJS**2 - 1) / (self.d**2 - 1)))
+        # Calculate the F=pi*(V+voffset)/vperiod corresponding to that EJ
+        sinF = np.sqrt((EJ**2 / self.EJS**2 - 1) / (self.d**2 - 1))
+        # sinF is bounded from 0 to 1, and therefore F is bounded from 0 to
+        # pi/2. This means that we're automatically staying on the first lobe
+        # of the
+        F = np.arcsin(sinF)
+
         # And finally the voltage
-        V = F * self.Vperiod / np.pi + self.Voffset
+        V = F * self.Vperiod / np.pi - self.Voffset
 
         # Mirror around Voffset, bounding the qubit to one side of the maxima
-        if self.V0 >= self.Voffset:
-            V[V < self.Voffset] = 2 * self.Voffset - V[V < self.Voffset]
-        else:
-            V[V > self.Voffset] = 2 * self.Voffset - V[V > self.Voffset]
-
-        # Mirror beyond 1 period, bounding the qubit to one side of the minima
-        Vminp = self.Vperiod / 2 + self.Voffset
-        Vminn = -self.Vperiod / 2 + self.Voffset
-        V[V > Vminp] = 2 * Vminp - V[V > Vminp]
-        V[V < Vminn] = 2 * Vminn - V[V < Vminn]
-
+        # if self.V0 >= self.Voffset:
+        #     V[V < self.Voffset] = 2 * self.Voffset - V[V < self.Voffset]
+        # else:
+        #     V[V > self.Voffset] = 2 * self.Voffset - V[V > self.Voffset]
+        # Stay within same half-period
+        # Vmax = self.Vperiod / 2 + self.Voffset
+        # Vmin = -self.Vperiod / 2 + self.Voffset
+        # V[V > Vmax] = 2 * Vminp - V[V > Vminp]
+        # V[V < Vmin] = 2 * Vminn - V[V < Vminn]
         return V
 
     def df_to_dV(self, df):  # noqa 102
         f0 = self.V_to_f(self.V0)
-        # log.info('---> f0: ' + str(f0))
-        # log.info('--> df: ' + str(df))
-        # log.info('--> df + f0: ' + str(df+f0))
         return self.f_to_V(df + f0) - self.V0

@@ -246,16 +246,19 @@ class CZ(Pulse):
         # For CZ pulses
         self.F_Terms = 1
         self.Coupling = 20E6
-        self.Offset = 300E6
+        self.init_detuning = 300E6
+        self.final_detuning = 30e6
         self.Lcoeff = np.array([0.3])
-        self.dfdV = 500E6
-        self.qubit = None
+        self.qubits = []
+        self.z_offsets = [0, 0]
+        self.which_qubit = 0
+        self.which_transition = 0
         self.negative_amplitude = False
-
         self.t_tau = None
+        self.buffer = 0
 
     def total_duration(self):
-        return self.width+self.plateau
+        return self.width+self.plateau+2*self.buffer
 
     def calculate_envelope(self, t0, t):
         if self.t_tau is None:
@@ -277,20 +280,25 @@ class CZ(Pulse):
                 theta_t[i] = np.interp(
                     t[i] - t0 + self.width / 2 - self.plateau / 2, self.t_tau,
                     self.theta_tau)
-        # Clip theta_t to remove numerical outliers:
-        theta_t = np.clip(theta_t, self.theta_i, None)
+        # NEW - calculate absolute frequency, rather than df. More transparent and flexible.
+        f0 = self.qubits[self.which_qubit].V_to_f(
+            self.z_offsets[self.which_qubit])
+        df = 2*self.Coupling*(1 / np.tan(theta_t) - 1 / np.tan(self.theta_i))
+        if self.which_qubit is 0 and self.which_transition is 0:
+            # qubit 1 moves; using f11 - f20
+            f = f0 - df
+        elif self.which_qubit is 0 and self.which_transition is 1:
+            # qubit 1 moves; using f11 - f02
+            f = f0 + df
+        elif self.which_qubit is 1 and self.which_transition is 0:
+            # qubit 2 moves; using f11 - f20
+            f = f0 + df
+        elif self.which_qubit is 1 and self.which_transition is 1:
+            # qubit 2 moves; using f11 - f02
+            f = f0 - df
+        self.f = f
+        values = self.qubits[self.which_qubit].f_to_V(f)
 
-        # clip theta_f to remove numerical outliers
-        theta_t = np.clip(theta_t, self.theta_i, None)
-        df = 2*self.Coupling * (1 / np.tan(theta_t) - 1 / np.tan(self.theta_i))
-
-        if self.qubit is None:
-            # Use linear dependence if no qubit was given
-            # log.info('---> df (linear): ' +str(df))
-            values = df / self.dfdV
-            # values = theta_t
-        else:
-            values = self.qubit.df_to_dV(df)
         if self.negative_amplitude is True:
             values = -values
 
@@ -302,17 +310,16 @@ class CZ(Pulse):
         # "Fast adiabatic qubit gates using only sigma_z control"
         # PRA 90, 022307 (2014)
         # Initial and final angles on the |11>-|02> bloch sphere
-        self.theta_i = np.arctan(2*self.Coupling / self.Offset)
-        self.theta_f = np.arctan(2*self.Coupling / self.amplitude)
-        # log.log(msg="calc", level=30)
+
+        self.theta_i = np.arctan(2*self.Coupling / self.init_detuning)
+        self.theta_f = np.arctan(2*self.Coupling / self.final_detuning)
 
         # Renormalize fourier coefficients to initial and final angles
         # Consistent with both Martinis & Geller and DiCarlo 1903.02492
         Lcoeff = self.Lcoeff
         Lcoeff[0] = (((self.theta_f - self.theta_i) / 2)
                      - np.sum(self.Lcoeff[range(2, self.F_Terms, 2)]))
-
-        # defining helper variabels
+        # defining helper variables
         n = np.arange(1, self.F_Terms + 1, 1)
         n_points = 1000  # Number of points in the numerical integration
 
@@ -326,8 +333,6 @@ class CZ(Pulse):
                 self.theta_i)
         # Now calculate t_tau according to Eq. (20)
         t_tau = np.trapz(np.sin(self.theta_tau), x=tau)
-        # log.info('t tau: ' + str(t_tau))
-        # t_tau = np.sum(np.sin(self.theta_tau))*(tau[1] - tau[0])
         # Find the width in units of tau:
         Width_tau = self.width / t_tau
 
@@ -340,7 +345,7 @@ class CZ(Pulse):
             if i > 0:
                 self.t_tau[i] = np.trapz(
                     np.sin(self.theta_tau[0:i+1]), x=tau[0:i+1])
-                # self.t_tau[i] = np.sum(np.sin(self.theta_tau[0:i+1]))*(tau[1]-tau[0])
+
 
 class NetZero(CZ):
     def __init__(self, *args, **kwargs):
@@ -358,8 +363,11 @@ class NetZero(CZ):
         self.slepian.calculate_cz_waveform()
 
     def calculate_envelope(self, t0, t):
-        return (self.slepian.calculate_envelope(t0-self.total_duration()/4, t) -
-                self.slepian.calculate_envelope(t0+self.total_duration()/4, t))
+        t0_1 = t0 - self.total_duration()/4 + self.buffer
+        t0_2 = t0 + self.total_duration()/4 - self.buffer
+
+        return (self.slepian.calculate_envelope(t0_1, t) -
+                self.slepian.calculate_envelope(t0_2, t))
 
 
 if __name__ == '__main__':

@@ -363,7 +363,6 @@ class Sequence:
             # log.info('inserting step in sequence list')
             # log.info('sequence len is {}'.format(len(self.sequence_list)))
 
-
     def add_gate_to_all(self, gate, t0=None, dt=None, align='center'):
         """Add a single gate to all qubits.
 
@@ -608,7 +607,6 @@ class SequenceToWaveforms:
 
         self._init_waveforms()
         # log.info('Point 6: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
-
 
         if self.align_to_end:
             shift = self._round((self.n_pts - 2) / self.sample_rate -
@@ -1006,7 +1004,7 @@ class SequenceToWaveforms:
         return y[n:-n+1]
 
     def _zero_last_z_point(self):
-        """Make sure last point in z waveforms is always zero, since this is 
+        """Make sure last point in z waveforms is always zero, since this is
            the value output by the AWG between sequences.
         """
         for n in range(self.n_qubit):
@@ -1137,10 +1135,8 @@ class SequenceToWaveforms:
         for step in self.sequence_list:
             for gate in step.gates:
                 qubit = gate.qubit
-                if isinstance(qubit, list):
-                    qubit = qubit[0]
-                gate_obj = gate.gate
 
+                gate_obj = gate.gate
 
                 if isinstance(gate_obj,
                               (gates.IdentityGate, gates.VirtualZGate)):
@@ -1153,6 +1149,15 @@ class SequenceToWaveforms:
                                                                         qubit]
                 elif isinstance(gate_obj, gates.TwoQubitGate):
                     # log.info('adding 2qb gate waveforms')
+                    if isinstance(gate_obj, gates.CPHASE):
+                        pulse = gate.pulse
+                        offset_qubit = qubit[abs(1-pulse.which_qubit)]
+                        qubit = qubit[pulse.which_qubit]
+                        offset_waveform = self._wave_z[offset_qubit]
+                        offset_delay = self.wave_z_delays[offset_qubit]
+                    else:
+                        qubit = qubit[0]
+
                     waveform = self._wave_z[qubit]
                     delay = self.wave_z_delays[qubit]
                     if self.compensate_crosstalk:
@@ -1237,12 +1242,17 @@ class SequenceToWaveforms:
                         t0 = middle - (max_duration - gate.duration) / 2
                     elif step.align == 'right':
                         t0 = middle + (max_duration - gate.duration) / 2
+
                     waveform[indices] += gate.pulse.calculate_waveform(
                         t0, t, ignore_drag_modulation=(
                             all_drag_f_equal and isinstance(
                                 gate_obj, gates.SingleQubitXYRotation)
                         )
                     )
+                    # Janky solution! Add a Z offset to the non-target qubit
+                    if isinstance(gate_obj, gates.CPHASE):
+                        offset_waveform[indices] += \
+                            gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
 
         # if all frequencies and drag were the same, apply afterwards
         if all_drag_f_equal:
@@ -1383,6 +1393,7 @@ class SequenceToWaveforms:
 
             if config.get('Pulse type, 2QB') in ['CZ', 'NetZero']:
                 pulse.F_Terms = d[config.get('Fourier terms, 2QB')]
+                pulse.buffer = config.get('Flux offset buffer, 2QB')
                 if config.get('Uniform 2QB pulses'):
                     pulse.width = config.get('Width, 2QB')
                     pulse.plateau = config.get('Plateau, 2QB')
@@ -1391,10 +1402,43 @@ class SequenceToWaveforms:
                     pulse.plateau = config.get('Plateau, 2QB')
 
                 # spectra
-                if config.get('Assume linear dependence' + s, True):
-                    pulse.qubit = None
+                pulse.qubits = [self.qubits[n], self.qubits[n+1]]
+
+                # which qubit moves
+                pulse.which_moves = config.get('Qubit trajectories'+s)
+                if pulse.which_moves == 'Dynamic-Fixed':
+                    pulse.which_qubit = 0
                 else:
-                    pulse.qubit = self.qubits[n]
+                    pulse.which_qubit = 1
+                pulse.which_transition = config.get('Which transition'+s)
+
+                # Get starting frequencies
+                f1_0 = config.get('First qubit initial f01'+s)
+                f2_0 = config.get('Second qubit initial f01'+s)
+                pulse.z_offsets = [0, 0]
+                if int(f1_0):
+                    pulse.z_offsets[0] = pulse.qubits[0].f_to_V(f1_0)[0]
+                if int(f2_0):
+                    pulse.z_offsets[1] = pulse.qubits[1].f_to_V(f2_0)[0]
+
+                # Calculate starting delta
+                f0 = [qb.V_to_f(V) for
+                      (qb, V) in zip(pulse.qubits, pulse.z_offsets)]
+                f11 = np.sum(f0)
+                f20 = 2*f0[0] - pulse.qubits[0].Ec
+                f02 = 2*f0[1] - pulse.qubits[1].Ec
+
+                if pulse.which_transition == '20-11':
+                    pulse.init_detuning = f11 - f20
+                    pulse.which_transition = 0
+                else:
+                    pulse.init_detuning = f11 - f02
+                    pulse.which_transition = 1
+
+                pulse.final_detuning = config.get('Delta final, 2QB' + s)
+                # Ensure we aren't doing an avoided crossing
+                if np.sign(pulse.final_detuning) != np.sign(pulse.init_detuning):
+                    pulse.final_detuning *= -1
 
                 # Get Fourier values
                 if d[config.get('Fourier terms, 2QB')] == 4:
@@ -1418,9 +1462,6 @@ class SequenceToWaveforms:
                     pulse.Lcoeff = np.array([config.get('L1, 2QB' + s)])
 
                 pulse.Coupling = config.get('Coupling, 2QB' + s)
-                pulse.Offset = config.get('f11-f20 initial, 2QB' + s)
-                pulse.amplitude = config.get('f11-f20 final, 2QB' + s)
-                pulse.dfdV = config.get('df/dV, 2QB' + s)
                 pulse.negative_amplitude = config.get('Negative amplitude' + s)
 
                 pulse.calculate_cz_waveform()
@@ -1439,7 +1480,7 @@ class SequenceToWaveforms:
                 pulse.amplitude = config.get('Amplitude, 2QB' + s)
 
             gates.CZ.new_angles(
-                config.get('QB1 Phi 2QB #12'), config.get('QB2 Phi 2QB #12'))
+                config.get('QB1 Phi 2QB'+s), config.get('QB2 Phi 2QB'+s))
 
             self.pulses_2qb[n] = pulse
 
