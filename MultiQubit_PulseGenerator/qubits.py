@@ -91,8 +91,12 @@ class Transmon(Qubit):
         self.f01_min = f01_min
         self.Ec = Ec
         self.Vperiod = Vperiod
-        self.Voffset = Voffset
         self.V0 = V0
+
+        # Ensure that Voffset is within the first period
+        self.Voffset = Voffset % Vperiod  # stay within one period
+        if self.Voffset > 0.5 * self.Vperiod:
+            self.Voffset -= self.Vperiod
 
         # Calculate the JJ parameters
         self.EJS = (self.f01_max + self.Ec)**2 / (8 * self.Ec)
@@ -124,10 +128,16 @@ class Transmon(Qubit):
 
         # Calculate the F=pi*(V+voffset)/vperiod corresponding to that EJ
         sinF = np.sqrt((EJ**2 / self.EJS**2 - 1) / (self.d**2 - 1))
+ 
         # sinF is bounded from 0 to 1, and therefore F is bounded from 0 to
-        # pi/2. This means that we're automatically staying on the first lobe
-        # of the
+        # pi/2 and V from 0 to +Vperiod/2.
         F = np.arcsin(sinF)
+
+        # If Voffset tells us we're on the left half of the tuning lobe,
+        # the most efficient path to a target frequency targets that side
+        # of the lobe.
+        if self.Voffset < 0:
+            F = -F
 
         # And finally the voltage
         V = F * self.Vperiod / np.pi - self.Voffset
