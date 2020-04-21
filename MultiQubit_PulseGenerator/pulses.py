@@ -363,8 +363,8 @@ class NetZero(CZ):
         self.slepian.calculate_cz_waveform()
 
     def calculate_envelope(self, t0, t):
-        t0_1 = t0 - self.total_duration()/4 + self.buffer
-        t0_2 = t0 + self.total_duration()/4 - self.buffer
+        t0_1 = t0 - self.total_duration()/4
+        t0_2 = t0 + self.total_duration()/4
 
         return (self.slepian.calculate_envelope(t0_1, t) -
                 self.slepian.calculate_envelope(t0_2, t))

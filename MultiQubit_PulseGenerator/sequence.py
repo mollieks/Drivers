@@ -1251,8 +1251,17 @@ class SequenceToWaveforms:
                     )
                     # Janky solution! Add a Z offset to the non-target qubit
                     if isinstance(gate_obj, gates.CPHASE):
-                        offset_waveform[indices] += \
-                            gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
+                        midpt = int(len(indices)/2)
+                        first_half = indices[0:midpt]
+                        second_half = indices[midpt:]
+                        if gate.pulse.offset_style == 'NetZero':
+                            offset_waveform[first_half] += \
+                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
+                            offset_waveform[second_half] -= \
+                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
+                        elif gate.pulse.offset_style == 'Square':
+                            offset_waveform[indices] += \
+                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
 
         # if all frequencies and drag were the same, apply afterwards
         if all_drag_f_equal:
@@ -1392,6 +1401,7 @@ class SequenceToWaveforms:
                              config.get('Pulse type, 2QB'))(complex=False))
 
             if config.get('Pulse type, 2QB') in ['CZ', 'NetZero']:
+                pulse.offset_style = config.get('Offset qubit style, 2QB')
                 pulse.F_Terms = d[config.get('Fourier terms, 2QB')]
                 pulse.buffer = config.get('Flux offset buffer, 2QB')
                 if config.get('Uniform 2QB pulses'):
