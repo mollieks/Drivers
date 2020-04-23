@@ -1149,7 +1149,8 @@ class SequenceToWaveforms:
                                                                         qubit]
                 elif isinstance(gate_obj, gates.TwoQubitGate):
                     # log.info('adding 2qb gate waveforms')
-                    if isinstance(gate_obj, gates.CPHASE):
+                    if isinstance(gate.pulse, pulses.CZ) or \
+                            isinstance(gate.pulse, pulses.NetZero):
                         pulse = gate.pulse
                         offset_qubit = qubit[abs(1-pulse.which_qubit)]
                         qubit = qubit[pulse.which_qubit]
@@ -1250,9 +1251,10 @@ class SequenceToWaveforms:
                         )
                     )
 
-                    # If doing a CPHASE gate, also update the Z waveform for
+                    # If doing a CZ or NetZero gate, also update the Z waveform for
                     # the qubit that's being offset to its idling frequency
-                    if isinstance(gate_obj, gates.CPHASE):
+                    if isinstance(gate.pulse, pulses.CZ) or \
+                            isinstance(gate.pulse, pulses.NetZero):
                         delay_diff = offset_delay - delay
                         t0_offset = t0 + delay_diff
                         offs_start = start + delay_diff
