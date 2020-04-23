@@ -1406,10 +1406,10 @@ class SequenceToWaveforms:
                              config.get('Pulse type, 2QB'))(complex=False))
 
             if config.get('Pulse type, 2QB') in ['CZ', 'NetZero']:
-                pulse.offset_style = config.get('Offset qubit style, 2QB')
+                pulse.offset_style = config.get('Offset qubit pulse style, 2QB')
                 pulse.F_Terms = d[config.get('Fourier terms, 2QB')]
-                pulse.buffer = config.get('Flux offset buffer, 2QB')
-                pulse.buffer_width = config.get('Offset qubit pulse ringup, 2QB')
+                pulse.buffer = config.get('Flux offset buffer plateau, 2QB')
+                pulse.buffer_width = config.get('Flux offset buffer width, 2QB')
                 if config.get('Uniform 2QB pulses'):
                     pulse.width = config.get('Width, 2QB')
                     pulse.plateau = config.get('Plateau, 2QB')
