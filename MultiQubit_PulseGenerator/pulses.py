@@ -39,7 +39,7 @@ class Pulse:
 
     """
 
-    def __init__(self, complex):
+    def __init__(self, complex, **kwargs):
 
         # set variables
         self.amplitude = 0.5
@@ -54,6 +54,9 @@ class Pulse:
         self.complex = complex
         self.iq_skew = 0.0
         self.iq_ratio = 1.0
+
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     def total_duration(self):
         """Get the total duration for the pulse.
@@ -256,9 +259,11 @@ class CZ(Pulse):
         self.negative_amplitude = False
         self.t_tau = None
         self.buffer = 0
+        self.buffer_width = 0
+        self.offset_style = 'Unipolar'
 
     def total_duration(self):
-        return self.width+self.plateau+2*self.buffer
+        return self.width + self.plateau + 2*self.buffer + self.buffer_width
 
     def calculate_envelope(self, t0, t):
         if self.t_tau is None:
@@ -303,6 +308,23 @@ class CZ(Pulse):
             values = -values
 
         return values
+
+    def calculate_offset_envelope(self, t0, t):
+
+        # generate a cosine pulse to smoothly offset the second qubit
+        which_qubit_offset = int(abs(1 - self.which_qubit))
+        offset_amp = self.z_offsets[which_qubit_offset]
+        offset_width = self.buffer_width
+        offset_plateau = 2*self.buffer + self.width + self.plateau
+
+        offset_pulse = Cosine(
+            complex=False,
+            amplitude=offset_amp,
+            width=offset_width,
+            plateau=offset_plateau,
+            )
+
+        return offset_pulse.calculate_waveform(t0, t)
 
     def calculate_cz_waveform(self):
         """Calculate waveform for c-phase and store in object"""
@@ -363,11 +385,64 @@ class NetZero(CZ):
         self.slepian.calculate_cz_waveform()
 
     def calculate_envelope(self, t0, t):
-        t0_1 = t0 - self.total_duration()/4
-        t0_2 = t0 + self.total_duration()/4
+
+        pulse_width = (self.width + self.plateau)/2
+
+        if self.offset_style == 'Unipolar':
+            offset = pulse_width/2
+
+        elif self.offset_style == 'NetZero':
+            offset = (pulse_width + self.buffer_width)/2 + self.buffer
+
+        t0_1 = t0 - offset
+        t0_2 = t0 + offset
 
         return (self.slepian.calculate_envelope(t0_1, t) -
                 self.slepian.calculate_envelope(t0_2, t))
+
+    def calculate_offset_envelope(self, t0, t):
+
+        # generate a cosine pulse to smoothly offset the second qubit
+
+        which_qubit_offset = int(abs(1 - self.which_qubit))
+        offset_amp = self.z_offsets[which_qubit_offset]
+
+        if self.offset_style == 'Unipolar':
+
+            offset_width = self.buffer_width
+            offset_plateau = 2*self.buffer + self.width + self.plateau
+
+            offset_pulse = Cosine(
+                complex=False,
+                amplitude=offset_amp,
+                width=offset_width,
+                plateau=offset_plateau,
+                )
+
+            values = offset_pulse.calculate_waveform(t0, t)
+
+        elif self.offset_style == 'NetZero':
+
+            offset = (self.width+self.plateau)/4 + \
+                self.buffer_width/2 + self.buffer
+
+            t0_1 = t0 - offset
+            t0_2 = t0 + offset
+
+            offset_width = self.buffer_width
+            offset_plateau = (self.width + self.plateau)/2 + 2*self.buffer
+
+            offset_pulse = Cosine(
+                complex=False,
+                amplitude=offset_amp,
+                width=offset_width,
+                plateau=offset_plateau,
+                )
+
+            values = (offset_pulse.calculate_waveform(t0_1, t) -
+                      offset_pulse.calculate_waveform(t0_2, t))
+
+        return values
 
 
 if __name__ == '__main__':

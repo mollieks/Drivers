@@ -1249,19 +1249,24 @@ class SequenceToWaveforms:
                                 gate_obj, gates.SingleQubitXYRotation)
                         )
                     )
-                    # Janky solution! Add a Z offset to the non-target qubit
+
+                    # If doing a CPHASE gate, also update the Z waveform for
+                    # the qubit that's being offset to its idling frequency
                     if isinstance(gate_obj, gates.CPHASE):
-                        midpt = int(len(indices)/2)
-                        first_half = indices[0:midpt]
-                        second_half = indices[midpt:]
-                        if gate.pulse.offset_style == 'NetZero':
-                            offset_waveform[first_half] += \
-                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
-                            offset_waveform[second_half] -= \
-                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
-                        elif gate.pulse.offset_style == 'Square':
-                            offset_waveform[indices] += \
-                                gate.pulse.z_offsets[abs(1-pulse.which_qubit)]
+                        delay_diff = offset_delay - delay
+                        t0_offset = t0 + delay_diff
+                        offs_start = start + delay_diff
+                        offs_end = end + delay_diff
+                        offset_indices = np.arange(
+                            max(np.floor(offs_start*self.sample_rate), 0),
+                            min(np.ceil(offs_end*self.sample_rate),
+                                len(waveform)),
+                            dtype=int)
+                        t_offset = offset_indices / self.sample_rate
+
+                        offset_waveform[offset_indices] += \
+                            gate.pulse.calculate_offset_envelope(
+                                t0_offset, t_offset)
 
         # if all frequencies and drag were the same, apply afterwards
         if all_drag_f_equal:
@@ -1404,6 +1409,7 @@ class SequenceToWaveforms:
                 pulse.offset_style = config.get('Offset qubit style, 2QB')
                 pulse.F_Terms = d[config.get('Fourier terms, 2QB')]
                 pulse.buffer = config.get('Flux offset buffer, 2QB')
+                pulse.buffer_width = config.get('Offset qubit pulse ringup, 2QB')
                 if config.get('Uniform 2QB pulses'):
                     pulse.width = config.get('Width, 2QB')
                     pulse.plateau = config.get('Plateau, 2QB')
