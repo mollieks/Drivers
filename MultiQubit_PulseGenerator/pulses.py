@@ -261,6 +261,8 @@ class CZ(Pulse):
         self.buffer = 0
         self.buffer_width = 0
         self.offset_style = 'Unipolar'
+        self.offset_pulse = None
+        self.t0s = None
 
     def total_duration(self):
         return self.width + self.plateau + 2*self.buffer + self.buffer_width
@@ -323,6 +325,8 @@ class CZ(Pulse):
             width=offset_width,
             plateau=offset_plateau,
             )
+        self.offset_pulse = offset_pulse
+        self.t0s = [t0]
 
         return offset_pulse.calculate_waveform(t0, t)
 
@@ -420,6 +424,8 @@ class NetZero(CZ):
                 )
 
             values = offset_pulse.calculate_waveform(t0, t)
+            self.offset_pulse = offset_pulse
+            self.t0s = [t0]
 
         elif self.offset_style == 'NetZero':
 
@@ -438,6 +444,9 @@ class NetZero(CZ):
                 width=offset_width,
                 plateau=offset_plateau,
                 )
+
+            self.offset_pulse = offset_pulse
+            self.t0s = [t0_1, t0_2]
 
             values = (offset_pulse.calculate_waveform(t0_1, t) -
                       offset_pulse.calculate_waveform(t0_2, t))
