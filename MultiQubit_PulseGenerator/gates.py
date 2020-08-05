@@ -165,13 +165,22 @@ class VirtualZGate(OneQubitGate):
 class CPHASE(TwoQubitGate):
     """ CPHASE gate. """
 
+    def __str__(self):
+        return 'Cphase'
+
 
 class iSWAP_no_1qb_phases(TwoQubitGate):
     """ ISWAP gate. """
 
+    def __str__(self):
+        return 'iSWAP'
+
 
 class ReadoutGate(OneQubitGate):
     """Readouts the qubit state."""
+
+    def __str__(self):
+        return 'Readout'
 
 
 class CustomGate(BaseGate):
@@ -209,6 +218,9 @@ class RabiGate(SingleQubitXYRotation):
         pulse.plateau = self.plateau
         pulse.phase = self.phase
         return pulse
+
+    def __str__(self):
+        return 'Rabi'
 
 
 class CompositeGate:
@@ -290,7 +302,7 @@ class CompositeGate:
         if self.name is not None:
             return self.name
         else:
-            super().__str__()
+            return('Composite')
 
     def __repr__(self):
         return self.__str__()
@@ -409,7 +421,7 @@ H.add_gate(Y2p)
 
 CZ = CPHASE_with_1qb_phases(
     0, 0)  # Start with 0, 0 as the single qubit phase shifts.
-iSWAP = iSWAP_with_1qb_phases(0,0)
+iSWAP = iSWAP_with_1qb_phases(0, 0)
 
 CNOT = CompositeGate(n_qubit=2, name='CNOT')
 CNOT.add_gate(H, 1)
