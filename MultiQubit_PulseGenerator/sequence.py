@@ -590,23 +590,21 @@ class SequenceToWaveforms:
         self.sequence = sequence
         self.sequence_list = sequence.sequence_list
         # log.info('Start of get_waveforms. Len sequence list: {}'.format(len(self.sequence_list)))
-        # log.info('Point 1: Sequence_list[3].gates = {}'.format(self.sequence_list[3].gates))
 
         if not self.simultaneous_pulses:
+            # log.info('separating gates')
             self._seperate_gates()
-        # log.info('Point 2: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
 
         self._explode_composite_gates()
-        # log.info('Point 3: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
 
         self._add_pulses_and_durations()
-        # log.info('Point 4: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
+        # log.info('pulses and durations complete')
 
         self._add_timings()
-        # log.info('Point 5: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
+        # log.info('timings complete')
 
         self._init_waveforms()
-        # log.info('Point 6: Sequence_list[6].gates = {}'.format(self.sequence_list[6].gates))
+        # log.info('waveforms initialized')
 
         if self.align_to_end:
             shift = self._round((self.n_pts - 2) / self.sample_rate -
@@ -616,6 +614,7 @@ class SequenceToWaveforms:
 
         self._perform_virtual_z()
         self._generate_waveforms()
+        # log.info('waveforms generated')
 
         # collapse all xy pulses to one waveform if no local XY control
         if not self.local_xy:
@@ -767,7 +766,7 @@ class SequenceToWaveforms:
             while i < len(step.gates):
                 gate = step.gates[i]
                 if isinstance(gate.gate, gates.CompositeGate):
-                    # # log.info('In exploded composite, handling composite gate {} at step {}'.format(gate, n))
+                    log.info('In exploded composite, handling composite gate {} at step {}'.format(gate, n))
                     for m, g in enumerate(gate.gate.sequence):
                         new_gate = [x.gate for x in g.gates]
                         # Single gates shouldn't be lists
@@ -1074,11 +1073,13 @@ class SequenceToWaveforms:
         # create empty waveforms of the correct size
         if self.trim_to_sequence:
             if self.extend_Z_offset_readout and not self.readout_match_main_size:
-                t_max_readout=0
+                t_max_readout = 0
                 for pulse in self.pulses_readout:
-                    if pulse.total_duration()>t_max_readout: t_max_readout=pulse.total_duration()
-                if self.readout_trig_duration>t_max_readout: t_max_readout=self.readout_trig_duration
-                end+=(t_max_readout+self.z_offset_time_after_readout)
+                    if pulse.total_duration() > t_max_readout:
+                        t_max_readout = pulse.total_duration()
+                if self.readout_trig_duration > t_max_readout:
+                    t_max_readout = self.readout_trig_duration
+                end += (t_max_readout+self.z_offset_time_after_readout)
             self.n_pts = int(np.ceil(end * self.sample_rate)) + 1
             if self.n_pts % 2 == 1:
                 # Odd n_pts give spectral leakage in FFT
@@ -1137,39 +1138,39 @@ class SequenceToWaveforms:
                 qubit = gate.qubit
 
                 gate_obj = gate.gate
+                # log.info('getting gate ' + str(gate_obj))
 
                 if isinstance(gate_obj,
                               (gates.IdentityGate, gates.VirtualZGate)):
                     continue
                 elif isinstance(gate_obj, gates.SingleQubitZRotation):
                     waveform = self._wave_z[qubit]
-                    delay = self.wave_z_delays[qubit]
                     if self.compensate_crosstalk:
-                        crosstalk = self._crosstalk.compensation_matrix[:,
-                                                                        qubit]
+                        xtalk = self._crosstalk.compensation_matrix[:, qubit]
                 elif isinstance(gate_obj, gates.TwoQubitGate):
-                    # log.info('adding 2qb gate waveforms')
+                    # preparatory kluges for adding offsets to CZ pulses
                     if isinstance(gate.pulse, pulses.CZ) or \
                             isinstance(gate.pulse, pulses.NetZero):
                         pulse = gate.pulse
                         offset_qubit = qubit[abs(1-pulse.which_qubit)]
                         qubit = qubit[pulse.which_qubit]
                         offset_waveform = self._wave_z[offset_qubit]
-                        offset_delay = self.wave_z_delays[offset_qubit]
+
+                        if self.compensate_crosstalk:
+                            xtalk_offset = self._crosstalk.compensation_matrix[
+                                :, offset_qubit]
                     else:
                         qubit = qubit[0]
 
                     waveform = self._wave_z[qubit]
-                    delay = self.wave_z_delays[qubit]
                     if self.compensate_crosstalk:
-                        crosstalk = self._crosstalk.compensation_matrix[:,
-                                                                        qubit]
+                        xtalk = self._crosstalk.compensation_matrix[:, qubit]
+
                 elif isinstance(gate_obj, gates.SingleQubitXYRotation):
                     waveform = self._wave_xy[qubit]
-                    delay = self.wave_xy_delays[qubit]
+
                 elif isinstance(gate_obj, gates.ReadoutGate):
                     waveform = self.readout_iq
-                    delay = 0
                 else:
                     raise ValueError(
                         "Don't know which waveform to add {} to.".format(
@@ -1179,55 +1180,60 @@ class SequenceToWaveforms:
                 if (isinstance(gate_obj, gates.ReadoutGate)
                         and not self.readout_match_main_size):
                     # special case for readout if not matching main wave size
-                    start = 0.0
-                    end = self._round(step.t_end - step.t_start)
-                else:
-                    start = self._round(step.t_start + delay)
-                    end = self._round(step.t_end + delay)
+                    step.t_start = 0.0
+                    step.t_end = self._round(step.t_end - step.t_start)
+                    # start = 0.0
+                    # end = self._round(step.t_end - step.t_start)
+                # else:
+                    # start = self._round(step.t_start + delay)
+                    # end = self._round(step.t_end + delay)
 
                 if (self.compensate_crosstalk and
                     isinstance(gate_obj,
                                (gates.SingleQubitZRotation,
                                 gates.TwoQubitGate))):
                     for q in range(self.n_qubit):
-                        waveform = self._wave_z[q]
-                        delay = self.wave_z_delays[q]
-                        start = self._round(step.t_start + delay)
-                        end = self._round(step.t_end + delay)
-                        indices = np.arange(
-                            max(np.floor(start * self.sample_rate), 0),
-                            min(
-                                np.ceil(end * self.sample_rate),
-                                len(waveform)),
-                            dtype=int)
 
+                        t0, indices = self._get_t0_for_gate(gate, step, q)
+
+                        waveform = self._wave_z[q]
+                        t = indices / self.sample_rate
                         # return directly if no indices
-                        if len(indices) == 0:
+                        if len(t) == 0:
                             continue
 
-                        # calculate time values for the pulse indices
-                        t = indices / self.sample_rate
-                        max_duration = end - start
-                        middle = end - max_duration / 2
-                        if step.align == 'center':
-                            t0 = middle
-                        elif step.align == 'left':
-                            t0 = middle - (max_duration - gate.duration) / 2
-                        elif step.align == 'right':
-                            t0 = middle + (max_duration - gate.duration) / 2
-
-                        scaling_factor = float(crosstalk[q, 0])
+                        scaling_factor = float(xtalk[q, 0])
                         if q != qubit:
                             scaling_factor = -scaling_factor
                         waveform[indices] += (
                             scaling_factor
                             * gate.pulse.calculate_waveform(t0, t))
+
+                    # kluge - add crosstalk for CZ/NZ pulses
+                    if isinstance(gate.pulse, pulses.CZ) or \
+                            isinstance(gate.pulse, pulses.NetZero):
+
+                        for q in range(self.n_qubit):
+
+                            t0, indices = self._get_t0_for_gate(
+                                gate, step, q)
+
+                            waveform = self._wave_z[q]
+                            t = indices / self.sample_rate
+                            if len(t) == 0:
+                                continue
+
+                            scaling_factor = float(xtalk_offset[q, 0])
+                            if q != offset_qubit:
+                                scaling_factor = -scaling_factor
+                            waveform[indices] += (
+                                scaling_factor *
+                                gate.pulse.calculate_offset_envelope(t0, t))
+
                 else:
                     # calculate the pulse waveform for the selected indices
-                    indices = np.arange(
-                        max(np.floor(start * self.sample_rate), 0),
-                        min(np.ceil(end * self.sample_rate), len(waveform)),
-                        dtype=int)
+
+                    t0, indices = self._get_t0_for_gate(gate, step, qubit)
 
                     # return directly if no indices
                     if len(indices) == 0:
@@ -1235,14 +1241,6 @@ class SequenceToWaveforms:
 
                     # calculate time values for the pulse indices
                     t = indices / self.sample_rate
-                    max_duration = end - start
-                    middle = end - max_duration / 2
-                    if step.align == 'center':
-                        t0 = middle
-                    elif step.align == 'left':
-                        t0 = middle - (max_duration - gate.duration) / 2
-                    elif step.align == 'right':
-                        t0 = middle + (max_duration - gate.duration) / 2
 
                     waveform[indices] += gate.pulse.calculate_waveform(
                         t0, t, ignore_drag_modulation=(
@@ -1251,22 +1249,16 @@ class SequenceToWaveforms:
                         )
                     )
 
-                    # If doing a CZ or NetZero gate, also update the Z waveform for
-                    # the qubit that's being offset to its idling frequency
+                    # kluge - add offset for CZ/NZ pulses
                     if isinstance(gate.pulse, pulses.CZ) or \
                             isinstance(gate.pulse, pulses.NetZero):
-                        delay_diff = offset_delay - delay
-                        t0_offset = t0 + delay_diff
-                        offs_start = start + delay_diff
-                        offs_end = end + delay_diff
-                        offset_indices = np.arange(
-                            max(np.floor(offs_start*self.sample_rate), 0),
-                            min(np.ceil(offs_end*self.sample_rate),
-                                len(waveform)),
-                            dtype=int)
-                        t_offset = offset_indices / self.sample_rate
 
-                        offset_waveform[offset_indices] += \
+                        t0_offset, indices_offset = \
+                            self._get_t0_for_gate(gate, step, offset_qubit)
+
+                        t_offset = indices_offset / self.sample_rate
+
+                        offset_waveform[indices_offset] += \
                             gate.pulse.calculate_offset_envelope(
                                 t0_offset, t_offset)
 
@@ -1591,6 +1583,39 @@ class SequenceToWaveforms:
             m = n + 1
             self.wave_xy_delays[n] = config.get('Qubit %d XY Delay' % m)
             self.wave_z_delays[n] = config.get('Qubit %d Z Delay' % m)
+
+    def _get_t0_for_gate(self, gate, step, qubit):
+
+        if isinstance(gate.gate, gates.SingleQubitZRotation) or \
+                isinstance(gate.gate, gates.TwoQubitGate):
+            waveform = self._wave_z[qubit]
+            delay = self.wave_z_delays[qubit]
+        elif isinstance(gate.gate, gates.SingleQubitXYRotation):
+            waveform = self._wave_xy[qubit]
+            delay = self.wave_xy_delays[qubit]
+        elif isinstance(gate.gate, gates.ReadoutGate):
+            waveform = self.readout_iq
+            delay = 0
+
+        start = self._round(step.t_start + delay)
+        end = self._round(step.t_end + delay)
+        indices = np.arange(
+                            max(np.floor(start * self.sample_rate), 0),
+                            min(
+                                np.ceil(end * self.sample_rate),
+                                len(waveform)),
+                            dtype=int)
+
+        max_duration = end - start
+        middle = end - max_duration / 2
+        if step.align == 'center':
+            t0 = middle
+        elif step.align == 'left':
+            t0 = middle - (max_duration - gate.duration) / 2
+        elif step.align == 'right':
+            t0 = middle + (max_duration - gate.duration) / 2
+
+        return t0, indices
 
 
 if __name__ == '__main__':
