@@ -290,6 +290,7 @@ class CZ(Pulse):
         f0 = self.qubits[self.which_qubit].V_to_f(
             self.z_offsets[self.which_qubit])
         df = 2*self.Coupling*(1 / np.tan(theta_t) - 1 / np.tan(self.theta_i))
+
         if self.which_qubit is 0 and self.which_transition is 0:
             # qubit 1 moves; using f11 - f20
             f = f0 - df
@@ -340,9 +341,11 @@ class CZ(Pulse):
 
         # Renormalize fourier coefficients to initial and final angles
         # Consistent with both Martinis & Geller and DiCarlo 1903.02492
-        Lcoeff = self.Lcoeff
-        Lcoeff[0] = (((self.theta_f - self.theta_i) / 2)
-                     - np.sum(self.Lcoeff[range(2, self.F_Terms, 2)]))
+
+        mean = (self.theta_f - self.theta_i) / 2
+        Lcoeff = [mean * coeff for coeff in self.Lcoeff]
+        Lcoeff[0] = ((self.theta_f - self.theta_i) / 2
+                     - np.sum(self.Lcoeff[slice(2, self.F_Terms, 2)]))
         # defining helper variables
         n = np.arange(1, self.F_Terms + 1, 1)
         n_points = 1000  # Number of points in the numerical integration
