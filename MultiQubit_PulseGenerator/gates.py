@@ -353,8 +353,8 @@ class CPHASE_with_1qb_phases(CompositeGate):
 
     """
 
-    def __init__(self, phi1, phi2):
-        super().__init__(n_qubit=2)
+    def __init__(self, phi1, phi2, name=None):
+        super().__init__(n_qubit=2, name=name)
         self.add_gate(CPHASE())
         self.add_gate([VirtualZGate(phi1), VirtualZGate(phi2)])
 
@@ -369,7 +369,7 @@ class CPHASE_with_1qb_phases(CompositeGate):
             Z rotation angle for qubit 2.
 
         """
-        self.__init__(phi1, phi2)
+        self.__init__(phi1, phi2, self.name)
 
     def __str__(self):
         return "CZ"
@@ -419,9 +419,10 @@ H = CompositeGate(n_qubit=1, name='H')
 H.add_gate(VZp)
 H.add_gate(Y2p)
 
-CZ = CPHASE_with_1qb_phases(
-    0, 0)  # Start with 0, 0 as the single qubit phase shifts.
+CZ = CPHASE_with_1qb_phases(0, 0, name='CZ')  # Start with 0, 0 as the single qubit phase shifts.
 iSWAP = iSWAP_with_1qb_phases(0, 0)
+
+CZs = [copy(CZ)] * 20
 
 CNOT = CompositeGate(n_qubit=2, name='CNOT')
 CNOT.add_gate(H, 1)

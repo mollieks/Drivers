@@ -527,6 +527,7 @@ class SequenceToWaveforms:
         self.pulses_1qb_z = [None for n in range(self.n_qubit)]
         self.pulses_2qb = [None for n in range(self.n_qubit - 1)]
         self.pulses_readout = [None for n in range(self.n_qubit)]
+        self.CZ_phases = [None for n in range(self.n_qubit - 1)]
 
         # cross-talk
         self.compensate_crosstalk = False
@@ -767,6 +768,14 @@ class SequenceToWaveforms:
                 gate = step.gates[i]
                 if isinstance(gate.gate, gates.CompositeGate):
                     log.info('In exploded composite, handling composite gate {} at step {}'.format(gate, n))
+
+                    # Kluge to get the correct CZ phases
+                    if type(gate.gate) is gates.CPHASE_with_1qb_phases:
+                        qubit = gate.qubit[0]
+                        # log.info('updating CZ phases for gate %d, ' % qubit
+                        #          + str(phases))
+                        gates.CZ.new_angles(*self.CZ_phases[qubit])
+
                     for m, g in enumerate(gate.gate.sequence):
                         new_gate = [x.gate for x in g.gates]
                         # Single gates shouldn't be lists
@@ -1489,8 +1498,12 @@ class SequenceToWaveforms:
                 # pulse-specific parameters
                 pulse.amplitude = config.get('Amplitude, 2QB' + s)
 
-            gates.CZ.new_angles(
-                config.get('QB1 Phi 2QB'+s), config.get('QB2 Phi 2QB'+s))
+            self.CZ_phases[n] = [config.get('QB1 Phi 2QB' + s),
+                                 config.get('QB2 Phi 2QB' + s)]
+            # Note: the below code DOES NOT WORK for more than one qubit pair!
+            # Have made a klugey solution but would be happy for a better one.
+            # gates.CZ.new_angles(
+            #     config.get('QB1 Phi 2QB'+s), config.get('QB2 Phi 2QB'+s))
 
             self.pulses_2qb[n] = pulse
 
